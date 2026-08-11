@@ -104,6 +104,25 @@ def cor_hex_para_rgb(hex_cor):
     return tuple(int(hex_cor[i:i + 2], 16) for i in (0, 2, 4))
 
 
+def calcular_hillshade(gz, xs, ys, altitude=45.0, azimuth=315.0):
+    """Sombreamento de relevo (hillshade) classico -- deriva slope/aspect por
+    diferencas finitas (np.gradient) e aplica a formula padrao de iluminacao
+    (sol a 315 graus/NO, 45 graus de altura, convencao cartografica usual).
+    Devolve array 0..1 (0 = sombra total, 1 = totalmente iluminado)."""
+    espaco_linha = ys[1] - ys[0]  # negativo (ys decrescente, linha 0 = norte)
+    espaco_coluna = xs[1] - xs[0]
+    dzdy, dzdx = np.gradient(gz, espaco_linha, espaco_coluna)
+    slope = np.arctan(np.hypot(dzdx, dzdy))
+    aspect = np.arctan2(-dzdx, dzdy)
+    azimute_rad = np.radians(360.0 - azimuth + 90.0)
+    altitude_rad = np.radians(altitude)
+    sombreado = (
+        np.sin(altitude_rad) * np.cos(slope)
+        + np.cos(altitude_rad) * np.sin(slope) * np.cos(azimute_rad - aspect)
+    )
+    return np.clip(sombreado, 0.0, 1.0)
+
+
 def gerar_hipsometria():
     """Raster PNG (base64) com tinta hipsometrica (mesma paleta dos outros 3
     produtos) a partir da topografia real (topografia_xyz.npy, curvas de
@@ -134,7 +153,17 @@ def gerar_hipsometria():
     posicao = t * n_trechos
     idx = np.clip(posicao.astype(int), 0, n_trechos - 1)
     frac = (posicao - idx)[..., None]
-    rgb = (paleta[idx] + (paleta[idx + 1] - paleta[idx]) * frac).astype(np.uint8)
+    rgb = paleta[idx] + (paleta[idx + 1] - paleta[idx]) * frac
+
+    # multiplica pela textura de sombreamento do relevo (hillshade) -- reescala
+    # de 0..1 pra 0.45..1.1 antes de multiplicar, senao as encostas em sombra
+    # total (perto de 0) apagavam a cor por completo (preto puro); assim a
+    # cor hipsometrica continua legivel em qualquer face, so modulada pela
+    # textura do relevo (mais clara nas faces viradas pro sol, mais escura
+    # nas faces em sombra) -- efeito classico de mapa hipsometrico + relevo.
+    sombra = calcular_hillshade(gz, xs, ys)
+    sombra_ajustada = (0.45 + 0.65 * sombra)[..., None]
+    rgb = np.clip(rgb * sombra_ajustada, 0, 255).astype(np.uint8)
 
     buf = io.BytesIO()
     Image.fromarray(rgb, mode="RGB").save(buf, format="PNG", optimize=True)
