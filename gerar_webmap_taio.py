@@ -17,13 +17,19 @@ Gera:
     visualizacao_web/webmap_taio.html
 """
 import base64
+import io
 import json
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
+from PIL import Image
+from pyproj import Transformer
+from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
 
 BASE = Path(__file__).parent
 BANCO = BASE.parent.parent / "2_Banco_de_Dados"
+TOPO_NPY = BASE.parent / "dados_entrada" / "topografia_drone" / "topografia_xyz.npy"
 PONTOS_CAMPO_GPKG = BANCO / "Unificação" / "GPKG_Novos" / "pontos_unificados_completo.gpkg"
 PONTOS_ESTRUTURAIS_GPKG = BANCO / "Unificação" / "GPKG_Novos" / "nuvem_pontos_direcoes.gpkg"
 LINEAMENTOS_GPKG = BANCO / "Unificação" / "lineamentos_direcoes.gpkg"
@@ -71,6 +77,11 @@ LABELS_LITOLOGIA_CAMPO = {
     "encaixante_irati": "Encaixante — Irati", "encaixante_palermo": "Encaixante — Palermo",
     "encaixante_rio_bonito": "Encaixante — Rio Bonito", "encaixante_sedimentar": "Encaixante — indefinida",
 }
+CORES_HIPSOMETRICAS = ["#A66A2C", "#C6924A", "#D8C88C", "#9FC1A3", "#4F9AA8"]  # mesma paleta
+# (baixo -> alto) usada nos outros 3 produtos (ver gerar_secao_interativa.py/gerar_visualizador_3d.py)
+RESOLUCAO_HIPSOMETRIA = 500  # pixels/eixo do raster gerado -- so precisa boa leitura na tela,
+# nao e uma textura de alta precisao (PNG comprime bem, gradiente suave em poucas cores)
+
 LABELS_CLASSIFICACAO_ESTRUTURAL = {
     "acamamento_sedimentar": "Acamamento sedimentar",
     "fratura_falha": "Fratura/falha",
@@ -86,6 +97,53 @@ def logo_base64():
     if not LOGO_PATH.exists():
         return None
     return base64.b64encode(LOGO_PATH.read_bytes()).decode("ascii")
+
+
+def cor_hex_para_rgb(hex_cor):
+    hex_cor = hex_cor.lstrip("#")
+    return tuple(int(hex_cor[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def gerar_hipsometria():
+    """Raster PNG (base64) com tinta hipsometrica (mesma paleta dos outros 3
+    produtos) a partir da topografia real (topografia_xyz.npy, curvas de
+    nivel) -- webmap nao tem uma "camada de elevacao" pronta via tile (isso
+    e dado proprio do projeto, nao um provedor publico), entao vira uma
+    imagem estatica sobreposta (L.imageOverlay) com bounds reais em WGS84,
+    igual a tecnica ja usada nos visualizadores 2D/3D pra hipsometria/satelite."""
+    if not TOPO_NPY.exists():
+        return None
+    xyz = np.load(TOPO_NPY)
+    xmin, ymin = xyz[:, 0].min(), xyz[:, 1].min()
+    xmax, ymax = xyz[:, 0].max(), xyz[:, 1].max()
+
+    linear = LinearNDInterpolator(xyz[:, :2], xyz[:, 2])
+    nearest = NearestNDInterpolator(xyz[:, :2], xyz[:, 2])
+    xs = np.linspace(xmin, xmax, RESOLUCAO_HIPSOMETRIA)
+    ys = np.linspace(ymax, ymin, RESOLUCAO_HIPSOMETRIA)  # y decrescente: linha 0 = norte (topo da imagem)
+    gx, gy = np.meshgrid(xs, ys)
+    gz = linear(gx, gy)
+    faltando = np.isnan(gz)
+    if faltando.any():
+        gz[faltando] = nearest(gx[faltando], gy[faltando])
+
+    zmin, zmax = float(np.nanmin(gz)), float(np.nanmax(gz))
+    t = np.clip((gz - zmin) / (zmax - zmin), 0.0, 1.0)
+    paleta = np.array([cor_hex_para_rgb(c) for c in CORES_HIPSOMETRICAS], dtype=float)
+    n_trechos = len(paleta) - 1
+    posicao = t * n_trechos
+    idx = np.clip(posicao.astype(int), 0, n_trechos - 1)
+    frac = (posicao - idx)[..., None]
+    rgb = (paleta[idx] + (paleta[idx + 1] - paleta[idx]) * frac).astype(np.uint8)
+
+    buf = io.BytesIO()
+    Image.fromarray(rgb, mode="RGB").save(buf, format="PNG", optimize=True)
+    png_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    transformer = Transformer.from_crs("EPSG:31982", "EPSG:4326", always_xy=True)
+    lon_min, lat_min = transformer.transform(xmin, ymin)
+    lon_max, lat_max = transformer.transform(xmax, ymax)
+    return png_b64, [[lat_min, lon_min], [lat_max, lon_max]]
 
 
 def para_wgs84(gdf):
@@ -182,6 +240,10 @@ def main():
           f"{len(estradas) if estradas is not None else 0} estradas, "
           f"{len(lugares) if lugares is not None else 0} lugares")
 
+    print("Gerando raster de hipsometria...")
+    hipsometria = gerar_hipsometria()
+    print(f"  hipsometria: {'ok' if hipsometria else 'topografia_xyz.npy não encontrado, pulando'}")
+
     centro_lat = (campo.total_bounds[1] + campo.total_bounds[3]) / 2
     centro_lon = (campo.total_bounds[0] + campo.total_bounds[2]) / 2
 
@@ -195,6 +257,15 @@ def main():
     geojson_lugares = json.loads(lugares.to_json()) if lugares is not None else None
 
     logo_b64 = logo_base64()
+
+    if hipsometria:
+        hipso_b64, hipso_bounds = hipsometria
+        trecho_hipsometria_js = (
+            "var hipsometria = L.imageOverlay('data:image/png;base64," + hipso_b64 + "', "
+            + json.dumps(hipso_bounds) + ", { opacity: 1 });"
+        )
+    else:
+        trecho_hipsometria_js = "var hipsometria = null;"
 
     formacoes_itens = (
         formacoes.drop_duplicates(subset=["formacao", "cor"])[["formacao", "cor"]]
@@ -328,6 +399,7 @@ def main():
         attribution: '&copy; OpenStreetMap contributors, SRTM &copy; OpenTopoMap (CC-BY-SA)',
         maxZoom: 17, subdomains: 'abc',
     }});
+    {trecho_hipsometria_js}
     rico.addTo(map);
 
     // ---- overlays ----
@@ -443,6 +515,8 @@ def main():
         "Lineamentos (satélite)": lineamentosLayer,
     };
 """
+    if hipsometria:
+        html += '    basemaps["Hipsometria"] = hipsometria;\n'
     if geojson_rios is not None:
         html += '    overlays["Rios"] = riosLayer;\n'
     if geojson_estradas is not None:
