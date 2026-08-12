@@ -77,8 +77,9 @@ LABELS_LITOLOGIA_CAMPO = {
     "encaixante_irati": "Encaixante — Irati", "encaixante_palermo": "Encaixante — Palermo",
     "encaixante_rio_bonito": "Encaixante — Rio Bonito", "encaixante_sedimentar": "Encaixante — indefinida",
 }
-CORES_HIPSOMETRICAS = ["#A66A2C", "#C6924A", "#D8C88C", "#9FC1A3", "#4F9AA8"]  # mesma paleta
-# (baixo -> alto) usada nos outros 3 produtos (ver gerar_secao_interativa.py/gerar_visualizador_3d.py)
+CORES_HIPSOMETRICAS = ["#4F9AA8", "#9FC1A3", "#D8C88C", "#C6924A", "#A66A2C"]  # mesma paleta
+# (baixo -> alto, rampa invertida em 10/08/2026) usada nos outros 3 produtos
+# (ver gerar_secao_interativa.py/gerar_visualizador_3d.py)
 RESOLUCAO_HIPSOMETRIA = 500  # pixels/eixo do raster gerado -- so precisa boa leitura na tela,
 # nao e uma textura de alta precisao (PNG comprime bem, gradiente suave em poucas cores)
 
