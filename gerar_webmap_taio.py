@@ -410,7 +410,7 @@ def main():
 <footer>Criado por Afonso Henrique de Jesus</footer>
 <script>
 (function() {{
-    var map = L.map('map', {{ zoomControl: true }}).setView([{centro_lat}, {centro_lon}], 13);
+    var map = L.map('map', {{ zoomControl: true }}).setView([{centro_lat}, {centro_lon}], 11);
 
     // ---- basemaps (tiles reais, precisam de internet) ----
     var satelite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}', {{
@@ -430,7 +430,7 @@ def main():
         maxZoom: 17, subdomains: 'abc',
     }});
     {trecho_hipsometria_js}
-    rico.addTo(map);
+    satelite.addTo(map);
 
     // ---- overlays ----
     function pontoEstilo(cor, raio) {{
