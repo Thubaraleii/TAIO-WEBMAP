@@ -23,9 +23,11 @@ from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 from PIL import Image
 from pyproj import Transformer
 from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
+from shapely.geometry import Point
 
 BASE = Path(__file__).parent
 BANCO = BASE.parent.parent / "2_Banco_de_Dados"
@@ -39,6 +41,7 @@ LINEAMENTOS_GPKG = BANCO / "Unificação" / "lineamentos_direcoes.gpkg"
 # formacoes sedimentares, incl. deposito quaternario (coluna "tipo" ==
 # "sedimentar"/"intrusiva").
 LITOLOGIA_ATUALIZADA = BANCO / "dados_base" / "litologia_processada.shp"
+GEOQUIMICA_CSV = BANCO / "QMC_TAIO_TODOS" / "geoquimica_dashboard.csv"
 OSM_RIOS = BANCO / "saida_processada" / "osm_rios.geojson"
 OSM_ESTRADAS = BANCO / "saida_processada" / "osm_estradas.geojson"
 OSM_LUGARES = BANCO / "saida_processada" / "osm_lugares.geojson"
@@ -54,6 +57,8 @@ MARCA_FONTE = "Montserrat, Arial, sans-serif"
 
 COR_SILL = "#A63D2F"
 COR_DIQUE = "#1B4332"
+COR_TI_ALTO = "#E67E22"
+COR_TI_BAIXO = "#2E86C1"
 NOMES_CAMADAS = ["Teresina", "Serra Alta", "Irati", "Palermo", "Rio Bonito"]
 CORES_CAMADAS = ["#D6C79A", "#8C8C86", "#3E362C", "#B5AE93", "#C9A66B"]
 COR_QUATERNARIO = "#D9CB82"
@@ -250,6 +255,34 @@ def carregar_formacoes():
     return gdf[["formacao", "cor", "categoria", "popup", "geometry"]]
 
 
+def carregar_geoquimica():
+    """Geoquimica bruta real (QMC_TAIO_TODOS, 41 amostras), coloridas por
+    classificacao Alto/Baixo-Ti. 3 amostras de referencia sem coordenada real
+    ficam de fora; as com ponto_id mas sem utm_e/utm_n na planilha (ex.:
+    ITC-44B) usam a coordenada do ponto de campo correspondente."""
+    df = pd.read_csv(GEOQUIMICA_CSV)
+    if PONTOS_CAMPO_GPKG.exists():
+        gdf_campo_bruto = gpd.read_file(PONTOS_CAMPO_GPKG)
+        coord_campo = {row.ponto_id: (row.geometry.x, row.geometry.y) for row in gdf_campo_bruto.itertuples()}
+        for i, row in df.iterrows():
+            if pd.isna(row["utm_e"]) and pd.notna(row["ponto_id"]):
+                xy = coord_campo.get(row["ponto_id"])
+                if xy:
+                    df.loc[i, "utm_e"], df.loc[i, "utm_n"] = xy
+    df = df.dropna(subset=["utm_e", "utm_n"])
+    gdf = gpd.GeoDataFrame(
+        df, geometry=[Point(x, y) for x, y in zip(df["utm_e"], df["utm_n"])], crs=31982
+    )
+    gdf = para_wgs84(gdf)
+    gdf["cor"] = gdf["classificacao_ti"].map({"Alto-Ti": COR_TI_ALTO, "Baixo-Ti": COR_TI_BAIXO}).fillna("#999999")
+    gdf["categoria"] = gdf["classificacao_ti"].fillna("Sem dado")
+    gdf["popup"] = gdf.apply(lambda r: (
+        f"<b>{r['amostra']}</b> ({r['classificacao_ti']})<br>{r['origem']}<br>"
+        f"TiO₂ {r['TiO2']:.2f}% · SiO₂ {r['SiO2']:.1f}%"
+    ), axis=1)
+    return gdf[["amostra", "cor", "categoria", "popup", "geometry"]]
+
+
 def carregar_osm(caminho, rotulo, categoria):
     if not caminho.exists():
         return None
@@ -275,6 +308,8 @@ def main():
     print(f"  sill/dique: {len(intrusiva)} polígonos")
     formacoes = carregar_formacoes()
     print(f"  formações: {len(formacoes)} polígonos")
+    geoquimica = carregar_geoquimica()
+    print(f"  geoquímica: {len(geoquimica)} amostras")
     rios = carregar_osm(OSM_RIOS, "rios", "Rio")
     estradas = carregar_osm(OSM_ESTRADAS, "estradas", "Estrada")
     lugares = carregar_osm(OSM_LUGARES, "lugares", "Localidade")
@@ -294,6 +329,7 @@ def main():
     geojson_lineamentos = json.loads(lineamentos.to_json())
     geojson_intrusiva = json.loads(intrusiva.to_json())
     geojson_formacoes = json.loads(formacoes.to_json())
+    geojson_geoquimica = json.loads(geoquimica.to_json())
     geojson_rios = json.loads(rios.to_json()) if rios is not None else None
     geojson_estradas = json.loads(estradas.to_json()) if estradas is not None else None
     geojson_lugares = json.loads(lugares.to_json()) if lugares is not None else None
@@ -330,6 +366,9 @@ def main():
         ]},
         "Sill/Dique": {"tipo": "area", "itens": [
             {"cor": COR_SILL, "label": "Soleira"}, {"cor": COR_DIQUE, "label": "Dique"},
+        ]},
+        "Geoquímica (Alto/Baixo-Ti)": {"tipo": "ponto", "itens": [
+            {"cor": COR_TI_ALTO, "label": "Alto-Ti"}, {"cor": COR_TI_BAIXO, "label": "Baixo-Ti"},
         ]},
         "Dados estruturais": {"tipo": "ponto", "itens": [
             {"cor": cor, "label": LABELS_CLASSIFICACAO_ESTRUTURAL.get(k, k)}
@@ -497,6 +536,18 @@ def main():
             registrarSub('Mapa geológico atualizado', f, layer);
         }},
     }});
+
+    var geoquimicaLayer = L.geoJSON({json.dumps(geojson_geoquimica, ensure_ascii=False)}, {{
+        pointToLayer: function(f, latlng) {{
+            var estilo = pontoEstilo(f.properties.cor, 6);
+            estilo.color = '#000';
+            return L.circleMarker(latlng, estilo);
+        }},
+        onEachFeature: function(f, layer) {{
+            layer.bindPopup(f.properties.popup);
+            registrarSub('Geoquímica (Alto/Baixo-Ti)', f, layer);
+        }},
+    }});
 """
 
     if geojson_rios is not None:
@@ -553,6 +604,7 @@ def main():
         "Pontos de campo": campoLayer,
         "Mapa geológico atualizado": formacoesLayer,
         "Sill/Dique": intrusivaLayer,
+        "Geoquímica (Alto/Baixo-Ti)": geoquimicaLayer,
         "Dados estruturais": estruturalLayer,
         "Lineamentos (satélite)": lineamentosLayer,
     };
