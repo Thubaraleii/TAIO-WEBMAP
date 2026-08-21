@@ -494,7 +494,7 @@ def main():
         style: function(f) {{ return {{ color: '#000', weight: 0.5, fillColor: f.properties.cor, fillOpacity: 0.55 }}; }},
         onEachFeature: function(f, layer) {{
             layer.bindPopup(f.properties.popup);
-            registrarSub('Mapa geológico real (CPRM)', f, layer);
+            registrarSub('Mapa geológico atualizado', f, layer);
         }},
     }});
 """
