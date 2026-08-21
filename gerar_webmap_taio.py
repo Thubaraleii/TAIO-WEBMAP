@@ -6,7 +6,7 @@ zoom infinito de verdade.
 
 Camadas (todas do Taió -- mesmo catalogo unificado dos outros produtos):
   - Pontos de campo (308, coloridos por litologia, popup com detalhes)
-  - Mapa geologico real (CPRM, 9 formacoes) + sill/dique digitalizados
+  - Mapa geologico atualizado (6 formacoes) + sill/dique digitalizados
   - Dados estruturais (235 pontos classificados) + lineamentos de satelite (98)
   - Rios/estradas/localidades (OSM, so os nomeados)
 
@@ -33,8 +33,12 @@ TOPO_NPY = BASE.parent / "dados_entrada" / "topografia_drone" / "topografia_xyz.
 PONTOS_CAMPO_GPKG = BANCO / "Unificação" / "GPKG_Novos" / "pontos_unificados_completo.gpkg"
 PONTOS_ESTRUTURAIS_GPKG = BANCO / "Unificação" / "GPKG_Novos" / "nuvem_pontos_direcoes.gpkg"
 LINEAMENTOS_GPKG = BANCO / "Unificação" / "lineamentos_direcoes.gpkg"
-FORMACOES_GEOJSON = BANCO / "saida_processada" / "formacoes_cprm_poligonos.geojson"
-POLIGON_INTRUSIVA_SHP = BANCO / "dados_base" / "poligon_intrusiva.shp"
+# litologia_processada.shp (ETL: 2_Banco_de_Dados/scripts_etl/processar_litologia_atualizada.py)
+# substitui o mapa geologico real (CPRM) + o poligon_intrusiva.shp antigo --
+# um shp so, com sill/dique redigitalizados (coluna "formacao") e as 6
+# formacoes sedimentares, incl. deposito quaternario (coluna "tipo" ==
+# "sedimentar"/"intrusiva").
+LITOLOGIA_ATUALIZADA = BANCO / "dados_base" / "litologia_processada.shp"
 OSM_RIOS = BANCO / "saida_processada" / "osm_rios.geojson"
 OSM_ESTRADAS = BANCO / "saida_processada" / "osm_estradas.geojson"
 OSM_LUGARES = BANCO / "saida_processada" / "osm_lugares.geojson"
@@ -50,7 +54,11 @@ MARCA_FONTE = "Montserrat, Arial, sans-serif"
 
 COR_SILL = "#A63D2F"
 COR_DIQUE = "#1B4332"
+NOMES_CAMADAS = ["Teresina", "Serra Alta", "Irati", "Palermo", "Rio Bonito"]
 CORES_CAMADAS = ["#D6C79A", "#8C8C86", "#3E362C", "#B5AE93", "#C9A66B"]
+COR_QUATERNARIO = "#D9CB82"
+CORES_LITOLOGIA_MAPA = dict(zip(NOMES_CAMADAS, CORES_CAMADAS))
+CORES_LITOLOGIA_MAPA["Depósito quaternário"] = COR_QUATERNARIO
 CORES_LITOLOGIA_CAMPO = {
     "sill_diabasio": COR_SILL, "sill_diabasio_cprm": COR_SILL,
     "dique": COR_DIQUE, "dique_cprm": COR_DIQUE,
@@ -224,7 +232,9 @@ def carregar_lineamentos():
 
 
 def carregar_intrusiva():
-    gdf = para_wgs84(gpd.read_file(POLIGON_INTRUSIVA_SHP))
+    gdf_lito = gpd.read_file(LITOLOGIA_ATUALIZADA)
+    gdf = gdf_lito.loc[gdf_lito["tipo"] == "intrusiva", ["formacao", "geometry"]].rename(columns={"formacao": "tipo"})
+    gdf = para_wgs84(gdf)
     gdf["cor"] = gdf["tipo"].map({"Soleira": COR_SILL, "Dique": COR_DIQUE}).fillna("#999999")
     gdf["categoria"] = gdf["tipo"]
     gdf["popup"] = gdf["tipo"]
@@ -232,7 +242,9 @@ def carregar_intrusiva():
 
 
 def carregar_formacoes():
-    gdf = para_wgs84(gpd.read_file(FORMACOES_GEOJSON))
+    gdf_lito = gpd.read_file(LITOLOGIA_ATUALIZADA)
+    gdf = para_wgs84(gdf_lito[gdf_lito["tipo"] == "sedimentar"])
+    gdf["cor"] = gdf["formacao"].map(CORES_LITOLOGIA_MAPA).fillna("#CCCCCC")
     gdf["categoria"] = gdf["formacao"]
     gdf["popup"] = gdf["formacao"]
     return gdf[["formacao", "cor", "categoria", "popup", "geometry"]]
@@ -262,7 +274,7 @@ def main():
     intrusiva = carregar_intrusiva()
     print(f"  sill/dique: {len(intrusiva)} polígonos")
     formacoes = carregar_formacoes()
-    print(f"  formações CPRM: {len(formacoes)} polígonos")
+    print(f"  formações: {len(formacoes)} polígonos")
     rios = carregar_osm(OSM_RIOS, "rios", "Rio")
     estradas = carregar_osm(OSM_ESTRADAS, "estradas", "Estrada")
     lugares = carregar_osm(OSM_LUGARES, "lugares", "Localidade")
@@ -313,7 +325,7 @@ def main():
                 "encaixante_rio_bonito": CORES_CAMADAS[4],
             }.items()
         ] + [{"cor": COR_LITOLOGIA_PADRAO, "label": "Outra/indefinida"}]},
-        "Mapa geológico real (CPRM)": {"tipo": "area", "itens": [
+        "Mapa geológico atualizado": {"tipo": "area", "itens": [
             {"cor": it["cor"], "label": it["label"]} for it in formacoes_itens
         ]},
         "Sill/Dique": {"tipo": "area", "itens": [
@@ -539,7 +551,7 @@ def main():
     };
     var overlays = {
         "Pontos de campo": campoLayer,
-        "Mapa geológico real (CPRM)": formacoesLayer,
+        "Mapa geológico atualizado": formacoesLayer,
         "Sill/Dique": intrusivaLayer,
         "Dados estruturais": estruturalLayer,
         "Lineamentos (satélite)": lineamentosLayer,
