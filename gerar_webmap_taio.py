@@ -200,7 +200,7 @@ def carregar_campo():
     gdf["cor"] = gdf["litologia_padronizada"].map(CORES_LITOLOGIA_CAMPO).fillna(COR_LITOLOGIA_PADRAO)
     gdf["categoria"] = gdf["litologia_padronizada"].map(LABELS_LITOLOGIA_CAMPO).fillna("Outra/indefinida")
     gdf["popup"] = gdf.apply(lambda r: (
-        f"<b>{r['ponto_id']}</b><br>"
+        f"<b>{r['nome_itc'] or r['ponto_id']}</b> ({r['ponto_id']})<br>"
         f"Litologia: {r['litologia_padronizada'] or '—'}<br>"
         f"Tipo: {r['tipo_ponto'] or '—'}<br>"
         f"Qualidade: {r['qualidade_dado'] or '—'}<br>"
