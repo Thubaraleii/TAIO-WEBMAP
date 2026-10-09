@@ -55,13 +55,13 @@ MARCA_NAVY = "#1B1F2E"
 MARCA_CINZA_CLARO = "#F2F2F2"
 MARCA_FONTE = "Montserrat, Arial, sans-serif"
 
-COR_SILL = "#A63D2F"
-COR_DIQUE = "#1B4332"
+COR_SILL = "#49B18C"
+COR_DIQUE = "#AFEC7C"
 COR_TI_ALTO = "#E67E22"
 COR_TI_BAIXO = "#2E86C1"
 NOMES_CAMADAS = ["Teresina", "Serra Alta", "Irati", "Palermo", "Rio Bonito"]
-CORES_CAMADAS = ["#D6C79A", "#8C8C86", "#3E362C", "#B5AE93", "#C9A66B"]
-COR_QUATERNARIO = "#D9CB82"
+CORES_CAMADAS = ["#F8B6A0", "#FB8D74", "#C8625D", "#FF7757", "#E3644F"]  # paleta do mapa geologico (Teresina, Serra Alta, Irati, Palermo, Rio Bonito)
+COR_QUATERNARIO = "#FFFBC2"
 CORES_LITOLOGIA_MAPA = dict(zip(NOMES_CAMADAS, CORES_CAMADAS))
 CORES_LITOLOGIA_MAPA["Depósito quaternário"] = COR_QUATERNARIO
 CORES_LITOLOGIA_CAMPO = {
