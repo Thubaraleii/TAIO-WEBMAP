@@ -50,7 +50,6 @@ OUT_HTML = BASE / "webmap_taio.html"
 
 MARCA_ROXO_ESCURO = "#2D0A4A"
 MARCA_ROXO = "#7B2FFF"
-MARCA_AZUL = "#2E6F95"
 MARCA_NAVY = "#1B1F2E"
 MARCA_CINZA_CLARO = "#F2F2F2"
 MARCA_FONTE = "Montserrat, Arial, sans-serif"
