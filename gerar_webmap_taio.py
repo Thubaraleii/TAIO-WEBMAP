@@ -554,12 +554,6 @@ def main():
     var rico = L.tileLayer('https://{{s}}.basemaps.cartocdn.com/rastertiles/voyager/{{z}}/{{x}}/{{y}}{{r}}.png', {{
         attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 20, subdomains: 'abcd',
     }});
-    var escuro = L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
-        attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 20, subdomains: 'abcd',
-    }});
-    var osmPadrao = L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-        attribution: '&copy; OpenStreetMap contributors', maxZoom: 19,
-    }});
     var relevo = L.tileLayer('https://{{s}}.tile.opentopomap.org/{{z}}/{{x}}/{{y}}.png', {{
         attribution: '&copy; OpenStreetMap contributors, SRTM &copy; OpenTopoMap (CC-BY-SA)',
         maxZoom: 17, subdomains: 'abc',
@@ -719,8 +713,6 @@ def main():
         "Rico (CartoDB Voyager)": rico,
         "Satélite (Esri)": satelite,
         "Relevo/Topográfico": relevo,
-        "Escuro (CartoDB Dark)": escuro,
-        "OSM Padrão": osmPadrao,
     };
     var overlays = {
         "Pontos de campo": campoLayer,
