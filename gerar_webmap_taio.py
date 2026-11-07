@@ -35,6 +35,10 @@ TOPO_NPY = BASE.parent / "dados_entrada" / "topografia_drone" / "topografia_xyz.
 PONTOS_CAMPO_GPKG = BANCO / "Unificação" / "GPKG_Novos" / "pontos_unificados_completo.gpkg"
 PONTOS_ESTRUTURAIS_GPKG = BANCO / "Unificação" / "GPKG_Novos" / "nuvem_pontos_direcoes.gpkg"
 LINEAMENTOS_GPKG = BANCO / "Unificação" / "lineamentos_direcoes.gpkg"
+# base regional (ETL: 2_Banco_de_Dados/scripts_etl/exportar_geologia_regional_sc.py e atualizar_base_0711.py)
+GEOLOGIA_REGIONAL_GPKG = BANCO / "dados_base" / "geologia_regional_sc.gpkg"
+POCOS_GPKG = BANCO / "Unificação" / "pocos_regionais.gpkg"
+PANORAMA_UTM = (440000.0, 6930000.0, 790000.0, 7110000.0)  # mesmo recorte do 3D regional
 # litologia_processada.shp (ETL: 2_Banco_de_Dados/scripts_etl/processar_litologia_atualizada.py)
 # substitui o mapa geologico real (CPRM) + o poligon_intrusiva.shp antigo --
 # um shp so, com sill/dique redigitalizados (coluna "formacao") e as 6
@@ -295,6 +299,62 @@ def carregar_osm(caminho, rotulo, categoria):
     return gdf[cols]
 
 
+def _preciso(gdf, tolerancia_m=None):
+    """Reduz o tamanho do geojson: simplifica em UTM e arredonda as coordenadas (1e-5 grau ~ 1 m)."""
+    import shapely
+    if tolerancia_m:
+        gdf = gdf.copy()
+        gdf["geometry"] = gdf.geometry.simplify(tolerancia_m, preserve_topology=True)
+    gdf = para_wgs84(gdf)
+    gdf["geometry"] = shapely.set_precision(gdf.geometry.values, 1e-5)
+    return gdf
+
+
+def carregar_geologia_regional():
+    """Mapa geologico de SC (CPRM 1:500.000) recortado no panorama; legenda com as 24 maiores unidades."""
+    gdf = gpd.read_file(GEOLOGIA_REGIONAL_GPKG, layer="litologia")
+    gdf["area"] = gdf.geometry.area
+    ordem = gdf.groupby("nome")["area"].sum().sort_values(ascending=False)
+    principais = set(ordem.index[:24])
+    gdf["categoria"] = gdf["nome"].where(gdf["nome"].isin(principais), "Outras unidades")
+    gdf["popup"] = gdf.apply(lambda r: (
+        f"<b>{r['nome']}</b> ({r['sigla']})<br>{r['periodo'] if isinstance(r['periodo'], str) else 's/ período'}"
+        f"{(' · ' + format(r['idade_max'], '.0f') + ' Ma') if r['idade_max'] == r['idade_max'] and r['idade_max'] else ''}<br>"
+        f"{r['classe'] if isinstance(r['classe'], str) else ''}<br>{(r['litotipo'] or '')[:110] if isinstance(r['litotipo'], str) else ''}"
+    ), axis=1)
+    itens = [{"cor": gdf.loc[gdf["nome"] == n, "cor"].iloc[0], "label": n} for n in ordem.index[:24]]
+    itens.append({"cor": "#C8C8C8", "label": "Outras unidades"})
+    return _preciso(gdf[["categoria", "cor", "popup", "geometry"]], 150), itens
+
+
+def carregar_estrutura_cprm():
+    gdf = gpd.read_file(GEOLOGIA_REGIONAL_GPKG, layer="estrutura")
+    gdf["cor"] = gdf["categoria"].map({"Falha": "#FF493D", "Fratura": "#9FB3C8", "Dobra / outra": "#C77DFF"}).fillna("#9FB3C8")
+    gdf["popup"] = "<b>" + gdf["categoria"] + "</b><br>" + gdf["tipo"].astype(str) + "<br>CPRM/SGB (SIG SC 1:500.000)"
+    return _preciso(gdf[["categoria", "cor", "popup", "geometry"]], 60)
+
+
+def carregar_diques_cprm():
+    gdf = gpd.read_file(GEOLOGIA_REGIONAL_GPKG, layer="dique")
+    gdf["cor"] = COR_DIQUE
+    gdf["categoria"] = "Dique CPRM"
+    gdf["popup"] = "<b>Dique</b><br>CPRM/SGB (SIG SC 1:500.000)"
+    return _preciso(gdf[["categoria", "cor", "popup", "geometry"]])
+
+
+def carregar_pocos():
+    gdf = gpd.read_file(POCOS_GPKG)
+    gdf["categoria"] = gdf["fonte"].map(lambda f: "SAG (CPRM)" if str(f).startswith("CPRM") else "ANP")
+    gdf["cor"] = gdf["categoria"].map({"ANP": "#F6B76B", "SAG (CPRM)": "#5BA3D9"})
+
+    def popup(r):
+        prof = f"{r['profundidade_m']:.0f} m" if r["profundidade_m"] == r["profundidade_m"] else "s/ dado"
+        extra = "".join(f"<br>{k}: {r[k]}" for k in ("CATEGORIA", "SITUACAO", "CONCLUSAO") if k in r.index and isinstance(r[k], str))
+        return f"<b>{r['nome']}</b><br>Profundidade: {prof}{extra}<br>{r['fonte']}"
+    gdf["popup"] = gdf.apply(popup, axis=1)
+    return _preciso(gdf[["categoria", "cor", "popup", "geometry"]])
+
+
 def main():
     print("Carregando camadas...")
     campo = carregar_campo()
@@ -303,6 +363,12 @@ def main():
     print(f"  estrutural: {len(estrutural)} pontos")
     lineamentos = carregar_lineamentos()
     print(f"  lineamentos: {len(lineamentos)} linhas")
+    geologia_regional, itens_geologia_regional = carregar_geologia_regional()
+    estrutura_cprm = carregar_estrutura_cprm()
+    diques_cprm = carregar_diques_cprm()
+    pocos = carregar_pocos()
+    print(f"  regional: {len(geologia_regional)} unidades, {len(estrutura_cprm)} estruturas CPRM, "
+          f"{len(diques_cprm)} diques CPRM, {len(pocos)} poços")
     intrusiva = carregar_intrusiva()
     print(f"  sill/dique: {len(intrusiva)} polígonos")
     formacoes = carregar_formacoes()
@@ -327,6 +393,13 @@ def main():
     geojson_estrutural = json.loads(estrutural.to_json())
     geojson_lineamentos = json.loads(lineamentos.to_json())
     geojson_intrusiva = json.loads(intrusiva.to_json())
+    geojson_geologia_regional = json.loads(geologia_regional.to_json())
+    geojson_estrutura_cprm = json.loads(estrutura_cprm.to_json())
+    geojson_diques_cprm = json.loads(diques_cprm.to_json())
+    geojson_pocos = json.loads(pocos.to_json())
+    lat_s, lon_o = Transformer.from_crs(31982, 4326, always_xy=True).transform(PANORAMA_UTM[0], PANORAMA_UTM[1])[::-1]
+    lat_n, lon_l = Transformer.from_crs(31982, 4326, always_xy=True).transform(PANORAMA_UTM[2], PANORAMA_UTM[3])[::-1]
+    bounds_panorama = [[lat_s, lon_o], [lat_n, lon_l]]
     geojson_formacoes = json.loads(formacoes.to_json())
     geojson_geoquimica = json.loads(geoquimica.to_json())
     geojson_rios = json.loads(rios.to_json()) if rios is not None else None
@@ -377,6 +450,14 @@ def main():
             {"cor": "#2E7D5B", "label": "Positivo"}, {"cor": "#E8A33D", "label": "Negativo"},
         ]},
     }
+    legenda_data["Geologia regional (CPRM SC)"] = {"tipo": "area", "itens": itens_geologia_regional}
+    legenda_data["Estruturas CPRM (falhas/fraturas)"] = {"tipo": "linha", "itens": [
+        {"cor": "#FF493D", "label": "Falha"}, {"cor": "#9FB3C8", "label": "Fratura"}, {"cor": "#C77DFF", "label": "Dobra / outra"},
+    ]}
+    legenda_data["Diques CPRM"] = {"tipo": "linha", "itens": [{"cor": COR_DIQUE, "label": "Dique CPRM"}]}
+    legenda_data["Poços (ANP/SAG)"] = {"tipo": "ponto", "itens": [
+        {"cor": "#F6B76B", "label": "ANP"}, {"cor": "#5BA3D9", "label": "SAG (CPRM)"},
+    ]}
     if geojson_rios is not None:
         legenda_data["Rios"] = {"tipo": "linha", "itens": [{"cor": "#2E6F95", "label": "Rio"}]}
     if geojson_estradas is not None:
@@ -401,16 +482,22 @@ def main():
 <style>
   * {{ box-sizing: border-box; }}
   html, body {{ margin: 0; height: 100%; font-family: {MARCA_FONTE}; background: {MARCA_NAVY}; }}
-  #map {{ position: absolute; top: 0; bottom: 0; left: 0; right: 0; background: {MARCA_NAVY}; }}
-  #cabecalho {{
-    position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000;
-    display: flex; align-items: center; gap: 10px; background: rgba(27,31,46,0.88);
-    border: 1px solid {MARCA_ROXO}; border-radius: 10px; padding: 8px 16px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  html, body {{ display: flex; flex-direction: column; }}
+  #map {{ flex: 1; position: relative; min-height: 0; background: {MARCA_NAVY}; }}
+  #barra-ferramentas {{
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 70px 8px 14px; flex-shrink: 0;
+    background: {MARCA_ROXO_ESCURO}; color: {MARCA_CINZA_CLARO}; border-bottom: 2px solid {MARCA_ROXO}; font-size: 12px;
   }}
-  #cabecalho img {{ width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid {MARCA_ROXO}; }}
-  #cabecalho h1 {{ font-size: 15px; margin: 0; color: {MARCA_CINZA_CLARO}; white-space: nowrap; }}
-  #cabecalho h1 b {{ color: {MARCA_ROXO}; }}
+  #barra-ferramentas h1 {{ font-size: 15px; margin: 0 8px 0 0; white-space: nowrap; }}
+  #barra-ferramentas h1 b {{ color: {MARCA_ROXO}; }}
+  #barra-ferramentas .grupo {{ display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }}
+  #barra-ferramentas label {{ opacity: .7; text-transform: uppercase; font-size: 10px; letter-spacing: .06em; }}
+  #barra-ferramentas button, #barra-ferramentas select {{
+    background: {MARCA_NAVY}; color: {MARCA_CINZA_CLARO}; border: 1px solid {MARCA_ROXO}; border-radius: 5px;
+    padding: 4px 9px; font: inherit; cursor: pointer;
+  }}
+  #barra-ferramentas button.ativo {{ background: {MARCA_ROXO}; color: {MARCA_NAVY}; }}
+  #logo-barra {{ position: fixed; top: 8px; right: 12px; width: 46px; height: 46px; border-radius: 50%; border: 2px solid {MARCA_ROXO}; z-index: 1100; }}
   .leaflet-popup-content-wrapper {{ background: {MARCA_ROXO_ESCURO}; color: {MARCA_CINZA_CLARO}; border: 1px solid {MARCA_ROXO}; }}
   .leaflet-popup-tip {{ background: {MARCA_ROXO_ESCURO}; }}
   .leaflet-popup-content {{ font-family: {MARCA_FONTE}; font-size: 12px; }}
@@ -418,11 +505,11 @@ def main():
   .leaflet-control-layers-toggle {{ filter: invert(1); }}
   #legenda {{
     background: rgba(45,10,74,0.92); color: {MARCA_CINZA_CLARO}; border: 1px solid {MARCA_ROXO};
-    border-radius: 6px; padding: 8px 10px; font-size: 11px; max-width: 200px;
+    border-radius: 6px; padding: 8px 10px; font-size: 11px; max-width: 230px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.4); display: flex; flex-direction: column;
   }}
   #legenda h4 {{ margin: 0 0 4px 0; font-size: 11px; color: {MARCA_ROXO}; text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0; }}
-  #legenda .legenda-corpo {{ overflow-y: auto; max-height: 42vh; padding-right: 4px; }}
+  #legenda .legenda-corpo {{ overflow-y: auto; max-height: calc(100vh - 150px); padding-right: 4px; }}
   #legenda .legenda-corpo::-webkit-scrollbar {{ width: 6px; }}
   #legenda .legenda-corpo::-webkit-scrollbar-track {{ background: transparent; }}
   #legenda .legenda-corpo::-webkit-scrollbar-thumb {{ background: {MARCA_ROXO}; border-radius: 3px; }}
@@ -452,11 +539,9 @@ def main():
 </style>
 </head>
 <body>
+<div id="barra-ferramentas"></div>
+{f'<img id="logo-barra" src="data:image/jpeg;base64,{logo_b64}">' if logo_b64 else ''}
 <div id="map"></div>
-<div id="cabecalho">
-  {f'<img src="data:image/jpeg;base64,{logo_b64}">' if logo_b64 else ''}
-  <h1><b>Webmap Taió</b> — Sistema Alimentador (Soleira/Dique)</h1>
-</div>
 <footer>Criado por Afonso Henrique de Jesus</footer>
 <script>
 (function() {{
@@ -536,6 +621,42 @@ def main():
         }},
     }});
 
+    var geoRegionalLayer = L.geoJSON({json.dumps(geojson_geologia_regional, ensure_ascii=False)}, {{
+        style: function(f) {{ return {{ color: '#333', weight: 0.3, fillColor: f.properties.cor, fillOpacity: 0.5 }}; }},
+        onEachFeature: function(f, layer) {{
+            layer.bindPopup(f.properties.popup);
+            registrarSub('Geologia regional (CPRM SC)', f, layer);
+        }},
+    }});
+    var estruturaCprmLayer = L.geoJSON({json.dumps(geojson_estrutura_cprm, ensure_ascii=False)}, {{
+        style: function(f) {{ return {{ color: f.properties.cor, weight: f.properties.categoria === 'Falha' ? 2 : 1.2, opacity: 0.9 }}; }},
+        onEachFeature: function(f, layer) {{
+            layer.bindPopup(f.properties.popup);
+            registrarSub('Estruturas CPRM (falhas/fraturas)', f, layer);
+        }},
+    }});
+    var diquesCprmLayer = L.geoJSON({json.dumps(geojson_diques_cprm, ensure_ascii=False)}, {{
+        style: function(f) {{ return {{ color: f.properties.cor, weight: 3.5, opacity: 0.95 }}; }},
+        onEachFeature: function(f, layer) {{
+            layer.bindPopup(f.properties.popup);
+            registrarSub('Diques CPRM', f, layer);
+        }},
+    }});
+    var pocosLayer = L.geoJSON({json.dumps(geojson_pocos, ensure_ascii=False)}, {{
+        pointToLayer: function(f, latlng) {{
+            return L.marker(latlng, {{
+                icon: L.divIcon({{
+                    className: '', iconSize: [16, 16], iconAnchor: [8, 8],
+                    html: '<div style="color:' + f.properties.cor + ';font-size:16px;line-height:16px;text-shadow:0 0 3px #000,0 0 3px #000;">&#9650;</div>',
+                }}),
+            }});
+        }},
+        onEachFeature: function(f, layer) {{
+            layer.bindPopup(f.properties.popup);
+            registrarSub('Poços (ANP/SAG)', f, layer);
+        }},
+    }});
+
     var geoquimicaLayer = L.geoJSON({json.dumps(geojson_geoquimica, ensure_ascii=False)}, {{
         pointToLayer: function(f, latlng) {{
             var estilo = pontoEstilo(f.properties.cor, 6);
@@ -588,8 +709,10 @@ def main():
 """
 
     html += """
+    geoRegionalLayer.addTo(map);
     formacoesLayer.addTo(map);
     intrusivaLayer.addTo(map);
+    pocosLayer.addTo(map);
     campoLayer.addTo(map);
 
     var basemaps = {
@@ -603,6 +726,10 @@ def main():
         "Pontos de campo": campoLayer,
         "Mapa geológico atualizado": formacoesLayer,
         "Sill/Dique": intrusivaLayer,
+        "Geologia regional (CPRM SC)": geoRegionalLayer,
+        "Estruturas CPRM (falhas/fraturas)": estruturaCprmLayer,
+        "Diques CPRM": diquesCprmLayer,
+        "Poços (ANP/SAG)": pocosLayer,
         "Geoquímica (Alto/Baixo-Ti)": geoquimicaLayer,
         "Dados estruturais": estruturalLayer,
         "Lineamentos (satélite)": lineamentosLayer,
@@ -618,7 +745,58 @@ def main():
         html += '    overlays["Localidades"] = lugaresLayer;\n'
 
     html += """
-    L.control.layers(basemaps, overlays, { collapsed: false }).addTo(map);
+    // ---- barra superior (padrao dos demais produtos): mapa base, camadas e vistas ----
+    var BOUNDS_TAIO = """ + json.dumps([[centro_lat - 0.12, centro_lon - 0.15], [centro_lat + 0.12, centro_lon + 0.15]]) + """;
+    var BOUNDS_PANORAMA = """ + json.dumps(bounds_panorama) + """;
+    var barra = document.getElementById('barra-ferramentas');
+    function el(tag, props) { var e = document.createElement(tag); Object.assign(e, props || {}); return e; }
+    function grupoBarra(rotulo, itens) {
+        var g = el('div', { className: 'grupo' });
+        g.appendChild(el('label', { textContent: rotulo }));
+        itens.forEach(function(i) { g.appendChild(i); });
+        barra.appendChild(g);
+    }
+    barra.appendChild(el('h1', { innerHTML: '<b>Webmap Taió</b> — Sistema Alimentador' }));
+    var baseAtual = satelite;
+    var selBase = el('select', {});
+    Object.keys(basemaps).forEach(function(nome) { selBase.appendChild(el('option', { value: nome, textContent: nome, selected: basemaps[nome] === satelite })); });
+    selBase.onchange = function() {
+        map.removeLayer(baseAtual);
+        baseAtual = basemaps[selBase.value];
+        baseAtual.addTo(map);
+        baseAtual.bringToBack && baseAtual.bringToBack();
+        atualizarLegenda();
+    };
+    grupoBarra('Mapa base', [selBase]);
+    var GRUPOS_CAMADAS = [
+        ['Campo', ['Pontos de campo']], ['Geologia Taió', ['Mapa geológico atualizado']], ['Sill/Dique', ['Sill/Dique']],
+        ['Geologia SC', ['Geologia regional (CPRM SC)']], ['Lineam. satélite', ['Lineamentos (satélite)']],
+        ['Estruturas CPRM', ['Estruturas CPRM (falhas/fraturas)']], ['Diques CPRM', ['Diques CPRM']], ['Poços', ['Poços (ANP/SAG)']],
+        ['Geoquímica', ['Geoquímica (Alto/Baixo-Ti)']], ['Estrutural', ['Dados estruturais']],
+        ['OSM', ['Rios', 'Estradas', 'Localidades']],
+    ];
+    var botoesCamadas = GRUPOS_CAMADAS.map(function(g) {
+        var nomes = g[1].filter(function(n) { return overlays[n]; });
+        var b = el('button', { textContent: g[0] });
+        b.onclick = function() {
+            var ligar = !nomes.some(function(n) { return map.hasLayer(overlays[n]); });
+            nomes.forEach(function(n) { if (ligar) map.addLayer(overlays[n]); else map.removeLayer(overlays[n]); });
+            atualizarLegenda();
+        };
+        b._nomes = nomes;
+        return b;
+    });
+    grupoBarra('Camadas', botoesCamadas);
+    grupoBarra('Vista', [
+        el('button', { textContent: 'Área de Taió', onclick: function() { map.fitBounds(BOUNDS_TAIO); } }),
+        el('button', { textContent: 'Panorama regional', onclick: function() { map.fitBounds(BOUNDS_PANORAMA); } }),
+    ]);
+    function sincronizarBarra() {
+        botoesCamadas.forEach(function(b) {
+            b.classList.toggle('ativo', b._nomes.some(function(n) { return map.hasLayer(overlays[n]); }));
+        });
+    }
+    setTimeout(function() { map.invalidateSize(); }, 50);
     L.control.scale({ metric: true, imperial: false }).addTo(map);
 
     // ---- legenda dinâmica: mostra só as seções das camadas ativas no mapa ----
@@ -651,6 +829,7 @@ def main():
     }
 
     function atualizarLegenda() {
+        sincronizarBarra();
         var corpo = '';
         Object.keys(overlays).forEach(function(nome) {
             if (!legendaDados[nome]) return;
