@@ -329,7 +329,7 @@ def carregar_geologia_regional():
 
 def carregar_estrutura_cprm():
     gdf = gpd.read_file(GEOLOGIA_REGIONAL_GPKG, layer="estrutura")
-    gdf["cor"] = gdf["categoria"].map({"Falha": "#FF493D", "Fratura": "#9FB3C8", "Dobra / outra": "#C77DFF"}).fillna("#9FB3C8")
+    gdf["cor"] = gdf["categoria"].map({"Falha": "#2563EB", "Fratura": "#D81B73", "Dobra / outra": "#C77DFF"}).fillna("#9FB3C8")
     gdf["popup"] = "<b>" + gdf["categoria"] + "</b><br>" + gdf["tipo"].astype(str) + "<br>CPRM/SGB (SIG SC 1:500.000)"
     return _preciso(gdf[["categoria", "cor", "popup", "geometry"]], 60)
 
@@ -452,7 +452,7 @@ def main():
     }
     legenda_data["Geologia regional (CPRM SC)"] = {"tipo": "area", "itens": itens_geologia_regional}
     legenda_data["Estruturas CPRM (falhas/fraturas)"] = {"tipo": "linha", "itens": [
-        {"cor": "#FF493D", "label": "Falha"}, {"cor": "#9FB3C8", "label": "Fratura"}, {"cor": "#C77DFF", "label": "Dobra / outra"},
+        {"cor": "#2563EB", "label": "Falha"}, {"cor": "#D81B73", "label": "Fratura"}, {"cor": "#C77DFF", "label": "Dobra / outra"},
     ]}
     legenda_data["Diques CPRM"] = {"tipo": "linha", "itens": [{"cor": COR_DIQUE, "label": "Dique CPRM"}]}
     legenda_data["Poços (ANP/SAG)"] = {"tipo": "ponto", "itens": [
